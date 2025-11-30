@@ -85,7 +85,7 @@ Search the cached messages for a query string.
       "timestamp": "2024-11-01T10:00:00Z"
     }
   ]
-}
+}```
 
 ## Public Deployment
 
