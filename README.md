@@ -92,157 +92,174 @@ Search the cached messages for a query string.
 The service is publicly available at:
 
  https://aurora-search-service.onrender.com/
-
 Swagger UI:
  https://aurora-search-service.onrender.com/docs
 
 Example request:
  https://aurora-search-service.onrender.com/search?q=test&page=1&page_size=20
 
-Bonus 1: Design Notes – Alternative Approaches
+## Bonus 1: Design Notes – Alternative Approaches
 
-While I implemented a simple in-memory search for this exercise, here are some alternatives I considered:
+While this project uses a simple in-memory search approach, here are several alternative designs that were considered:
 
-1. SQLite + Full-Text Search (FTS5)
+---
 
-Approach: On startup, fetch /messages, write them into an SQLite DB with an FTS5 virtual table, and run MATCH queries for search.
+### 1. SQLite + Full-Text Search (FTS5)
 
-Pros:
+**Approach:**  
+On startup, fetch `/messages`, store the data inside an SQLite database using an FTS5 virtual table, and perform `MATCH` queries for search.
 
-Still embedded / lightweight.
+**Pros:**  
+- Lightweight and embedded (no external service)  
+- Provides proper full-text indexing and ranking  
 
-Proper full-text ranking and querying.
+**Cons:**  
+- Requires schema setup and migration handling  
+- Needs periodic syncing if the upstream data changes  
 
-Cons:
+---
 
-Slightly more complexity for schema management and updates.
+### 2. External Search Engine (Elasticsearch / OpenSearch / Meilisearch)
 
-Needs periodic syncing with /messages if the data changes.
+**Approach:**  
+Index messages into a dedicated search engine. The `/search` endpoint simply forwards queries and paginates responses.
 
-2. External Search Engine (Elasticsearch / OpenSearch / Meilisearch)
+**Pros:**  
+- Very powerful search capabilities (fuzzy matching, relevance scoring, faceting)  
+- Scales easily for large datasets  
 
-Approach: Index messages into a dedicated search engine; /search just forwards the query and paginates results from there.
+**Cons:**  
+- Adds infrastructure and operational complexity  
+- Overkill for a small coding assignment  
 
-Pros:
+---
 
-Very powerful search (fuzzy matching, relevance, faceting, etc.).
+### 3. In-Memory Inverted Index
 
-Scales to large datasets.
+**Approach:**  
+Build a token-based inverted index at startup.  
+Example structure:
 
-Cons:
+token → [list of message IDs]
 
-Requires extra infrastructure.
 
-Higher operational overhead for this small task.
+Search would involve intersecting posting lists and retrieving corresponding records.
 
-3. In-Memory Inverted Index
+**Pros:**  
+- Extremely fast lookups for larger datasets  
+- No external dependencies  
 
-Approach: Build a token-based inverted index at startup:
+**Cons:**  
+- More complex to implement (tokenization, parsing, index building)  
+- Excessive for datasets of only a few thousand records  
 
-Map token → list of message IDs
+---
 
-For a query, intersect posting lists and fetch documents.
+### 4. On-Demand Proxy to the Upstream `/messages` API
 
-Pros:
+**Approach:**  
+Skip caching entirely and call the upstream API directly on each `/search` request, filtering and paginating results locally.
 
-Very fast lookup, better than naïve O(N) scanning for larger datasets.
+**Pros:**  
+- Simplest implementation  
+- No local storage needed  
 
-Still no external dependency.
+**Cons:**  
+- Latency depends entirely on upstream performance  
+- Hard to maintain <100ms latency consistently  
+- Tight coupling to upstream uptime  
 
-Cons:
+---
 
-More code and complexity (tokenization, index building, updates).
+### Rationale for Choosing In-Memory Search
 
-Overkill unless message count is high.
+For this assignment, in-memory caching with simple filtering provides:
 
-4. On-Demand Proxy to /messages
+- Predictably low latency  
+- Minimal architectural complexity  
+- Zero external dependencies  
+- Easy reasoning about performance and behavior  
 
-Approach: Instead of caching, the /search endpoint directly calls GET /messages with query parameters and passes through the results.
+---
 
-Pros:
+## Bonus 2: Reducing Latency to Approximately 30ms
 
-Very simple to implement, no local storage.
+The current service maintains sub-100ms latency by caching messages in memory, performing a single-pass filter, and supporting simple pagination. To further reduce latency to around 30ms, the following optimizations can be applied:
 
-Cons:
+---
 
-Latency heavily depends on upstream.
+### 1. Precompute an In-Memory Inverted Index
 
-Harder to guarantee < 100ms for every request.
+Build an index at startup by:
 
-Coupled to uptime/performance of the upstream service.
+- Tokenizing message text into searchable terms  
+- Mapping each term to the message IDs containing it  
+- Lowercasing and normalizing tokens  
 
-For this coding task, I chose in-memory caching + simple filtering because it gives:
+Searching then becomes:
 
-Predictable low latency
+- Tokenize the query  
+- Look up posting lists  
+- Intersect or merge results  
+- Fetch message documents  
 
-Simplicity
+This reduces search complexity from O(N) to roughly O(K), where K is the number of matched items.
 
-Easy reasoning for performance/behavior
+---
 
+### 2. Restrict and Optimize the Search Space
 
-Bonus 2: Reducing Latency to ~30ms
+Index only the relevant fields such as:
 
-Currently, the endpoint is designed to stay under 100ms by:
+- `message`  
+- `user_name`  
+- `user_id`
 
-Keeping messages in memory
+Avoid searching through entire records, timestamps, or unnecessary JSON fields.
 
-Doing a single-pass filter + simple pagination
+Store lowercased, pre-tokenized versions to avoid repeated computation.
 
-To further reduce latency to ~30ms, I would:
+---
 
-1. Precompute an In-Memory Index
+### 3. Keep the Service Warm and Close to Users
 
-Build an inverted index at startup:
+Performance can be improved by:
 
-Tokenize message text into terms.
+- Using always-on instances to avoid cold starts  
+- Deploying in a region close to clients and upstream API  
+- Ensuring sufficient CPU resources so Python’s garbage collector and event loop do not cause delays  
 
-Maintain a mapping term -> [message_ids].
+---
 
-For a query:
+### 4. Use Efficient Data Structures
 
-Tokenize the query.
+Leverage optimized Python built-ins:
 
-Lookup posting lists and intersect/union them.
+- `dict` for indexing  
+- `list` for posting lists  
+- `set` for fast intersections  
 
-Fetch messages by ID and paginate.
+Optionally incorporate optimized libraries like `rapidfuzz` if fuzzy matching is desired without sacrificing performance.
 
-This changes search from O(N) over all messages to roughly O(K) over matched lists, significantly reducing work for common queries.
+---
 
-2. Limit and Optimize the Search Space
+### 5. Benchmark and Tune
 
-Only index and search in the most relevant fields, e.g.:
+Use load-testing tools such as:
 
-text, subject, sender, etc.
+- `wrk`  
+- `locust`  
+- `ab`
 
-Avoid stringifying entire records.
+Measure:
 
-Use lowercased precomputed tokens.
+- p50 median latency  
+- p95 and p99 tail latencies  
+- Impact of page size and filtering strategy  
 
-3. Keep the Service “Warm” and Close to Users
+With these improvements, it is realistic to achieve:
 
-Deploy in a region close to the upstream and expected clients.
+- 5–20ms median response times  
+- 20–35ms high-percentile latencies  
 
-Ensure:
-
-No cold starts (use always-on instances).
-
-Adequate CPU so GC and Python overhead are minimal.
-
-4. Use Efficient Data Structures
-
-Use Python built-ins that are C-optimized:
-
-dict, list, set for index structures.
-
-Optionally use libraries like rapidfuzz for fast fuzzy matching
-if needed (while still staying under 30ms for typical queries).
-
-5. Benchmark and Tune
-
-Use a small benchmarking script (e.g., locust or wrk) to:
-
-Measure median and p95 latency.
-
-Tune page size, index structures, and number of workers.
-
-With these changes, for a typical dataset (tens of thousands of messages), it’s realistic to get median latencies in the 5–20ms range on a modest instance.
+for datasets of similar size.
