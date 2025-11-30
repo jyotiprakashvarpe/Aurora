@@ -87,6 +87,17 @@ Search the cached messages for a query string.
   ]
 }
 
+## Public Deployment
+
+The service is publicly available at:
+
+👉 https://aurora-search-service.onrender.com/
+
+Swagger UI:
+👉 https://aurora-search-service.onrender.com/docs
+
+Example request:
+👉 https://aurora-search-service.onrender.com/search?q=test&page=1&page_size=20
 
 Bonus 1: Design Notes – Alternative Approaches
 
