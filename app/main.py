@@ -20,19 +20,21 @@ class SearchResponse(BaseModel):
     total_pages: int
     results: List[Dict[str, Any]]
 
-
-async def fetch_messages_from_source() -> List[Dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=5.0) as client:
+async def fetch_messages_from_source():
+    async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(MESSAGES_API_URL)
         resp.raise_for_status()
         data = resp.json()
+
+        # The upstream API returns { "total": ..., "items": [...] }
         if isinstance(data, dict) and "items" in data:
             return data["items"]
-        elif isinstance(data, list):
+
+        # In case upstream returns a list (fallback)
+        if isinstance(data, list):
             return data
-        else:
-            logger.warning("Unexpected data format from upstream /messages")
-            return []
+
+        return []
 
 
 @app.on_event("startup")
